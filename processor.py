@@ -125,10 +125,13 @@ def _merge_note(snote_sequence):
 def _snote2events(snote: SplitNote, prev_vel: int):
     result = []
     if snote.velocity is not None:
+    	# off时，不记录速度信息
         modified_velocity = snote.velocity // 4
         if prev_vel != modified_velocity:
             result.append(Event(event_type='velocity', value=modified_velocity))
+            # 变速的话，记录变速后的速度信息
     result.append(Event(event_type=snote.type, value=snote.value))
+    # 记录声音on或者off信息
     return result
 
 
@@ -153,9 +156,11 @@ def _make_time_sift_events(prev_time, post_time):
     results = []
     while time_interval >= RANGE_TIME_SHIFT:
         results.append(Event(event_type='time_shift', value=RANGE_TIME_SHIFT-1))
+        # 中间间隔时间过长的时候，就记录并消耗时间
         time_interval -= RANGE_TIME_SHIFT
     if time_interval == 0:
         return results
+        # 和上一时间同时发生的事件，不记录新的时间
     else:
         return results + [Event(event_type='time_shift', value=time_interval-1)]
 
@@ -206,15 +211,24 @@ def encode_midi(file_path):
 
     for inst in mid.instruments:
         inst_notes = inst.notes
+        # [Note(start=0.895833, end=1.007812, pitch=65, velocity=84),note表示了一个音的起始和终止
         # ctrl.number is the number of sustain control. If you want to know abour the number type of control,
         # see https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
         ctrls = _control_preprocess([ctrl for ctrl in inst.control_changes if ctrl.number == 64])
+        # [ControlChange(number=64, value=0, time=0.000000),control表示了一个动作
         notes += _note_preprocess(ctrls, inst_notes)
+        # [Note(start=0.895833, end=1.007812, pitch=65, velocity=84),note_preprocess得到的是真子集，删掉了一些音符，应该是根据钢琴的专业知识
 
     dnotes = _divide_note(notes)
+    # 把音符的信息，转化为时间序列的动作信息on\off，相应，序列长度变为两倍
+    '''
+    <[SNote] time: 0.8958333333333333 type: note_on, value: 65, velocity: 84>,
+ 	<[SNote] time: 1.0078125 type: note_off, value: 65, velocity: None>,
+    '''
 
     # print(dnotes)
     dnotes.sort(key=lambda x: x.time)
+    # 按时间发生信息进行排序
     # print('sorted:')
     # print(dnotes)
     cur_time = 0
@@ -228,6 +242,13 @@ def encode_midi(file_path):
         cur_vel = snote.velocity
 
     return [e.to_int() for e in events]
+    # to_int里包含了分类信息：
+    '''
+    0-127:				on note:				128
+    128-255: 			off note:				128
+    256-355:			time_interval:			0-100
+    356-388:			velocity:				0-128 // 4
+    '''
 
 
 def decode_midi(idx_array, file_path=None):
